@@ -1,0 +1,7 @@
+volume_group="database";
+volume_name="base"
+cow_table_size="20G";
+mysql_user="temporary.mysql";
+mysql_pass="password";
+
+source_socket="/var/run/mysqld/mysqld.sock";

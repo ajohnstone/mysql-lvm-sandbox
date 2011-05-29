@@ -1,0 +1,35 @@
+#!/bin/bash
+# temporary.mysql.main
+#    Temporary MySQL Snapshots from MySQL
+#    Copyright (C) 2010 Andrew Johnstone, Maciej Wiercinski, Mark McIntyre
+#    Contacts: http://www.ajohnstone.com
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; version 2 of the License
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+#
+# Stops mysqld
+#
+tear_down_mysqld() {
+  # check if is runing
+  if [ -S "$snap_path"/socket ]
+  then
+     echo -n "Stopping MySQLd ";
+     ( mysqladmin shutdown -S "$snap_path/socket" > /dev/null ) &
+     ( while $( pgrep -f -l "mysqld.*datadir=$snap_path/" > /dev/null 2>&1 ); do sleep 1; done > /dev/null 2>&1 ) &
+     printProgress $!
+  else
+    echo "Socket does not exist at $snap_path/socket"
+  fi
+}
+

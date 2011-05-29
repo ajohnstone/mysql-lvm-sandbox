@@ -1,0 +1,39 @@
+#!/bin/bash
+# temporary.mysql.main
+#    Temporary MySQL Snapshots from MySQL
+#    Copyright (C) 2010 Andrew Johnstone, Maciej Wiercinski, Mark McIntyre
+#    Contacts: http://www.ajohnstone.com
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; version 2 of the License
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+current_user=$(who am i | awk '{print $1}');
+
+# binaries
+lvcreate="`which lvcreate`";
+lvdisplay="`which lvdisplay`";
+lvremove="`which lvremove`";
+
+# Which seems to fail so hard coded.
+lvcreate="/sbin/lvcreate"
+lvdisplay="/sbin/lvdisplay"
+lvremove="/sbin/lvremove"
+
+# Static variables
+config_dir="/usr/local/share/temporary.mysql"
+config_file="${config_dir}/temporary.mysql.cnf"
+
+# Variables
+snapshot_prefix="temporary";
+mounts_dir="/mnt/mysql";
+

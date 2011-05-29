@@ -1,0 +1,156 @@
+#!/bin/bash
+# temporary.mysql.main
+#    Temporary MySQL Snapshots from MySQL
+#    Copyright (C) 2010 Andrew Johnstone, Maciej Wiercinski, Mark McIntyre
+#    Contacts: http://www.ajohnstone.com
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; version 2 of the License
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+#
+# Prints progress indicator while pid ($1) is active
+#
+printProgress() {
+  # Exit ok if wrong syntax
+  if [[ $# -ne 1 && $# -ne 2 ]]; then exit 0; fi
+
+  # Manual sleepControl allowed
+  if [[ ! -z "$2" && "$2" -ge 0 ]]
+  then
+      local sleepControl=$2
+  else
+      local sleepControl=120
+  fi
+
+  # While process visible in ps
+  while $( ps | grep -q $1 )
+  do
+      # Exit bad if time running greater than sleepControl
+      sleepControl=$(( $sleepControl - 1 ))
+      if [ "$sleepControl" -eq 0 ]; then echo "(Failed - timeout exceeded)"; exit 1; fi
+
+      # Print fan
+      echo -en "-"
+      sleep 0.25
+      echo -en "\b\\"
+      sleep 0.25
+      echo -en "\b|"
+      sleep 0.25
+      echo -en "\b/"
+      sleep 0.25
+      echo -en "\b"
+  done
+  echo "(Done)"
+}
+
+#
+# Finds and returns first open port between 3307 and 3500 inclusive
+#
+first_ready_port() {
+  tempo=$(mktemp);
+  netstat -ntlp -4 | awk '{print $4}' | awk -F ':' '{print $2}' > $tempo;
+  found="0";
+  for candidate in `seq 3307 3500`; do
+    if ! (grep -q "^${candidate}\$" $tempo ) ; then
+      echo $candidate;
+      found="1";
+      break;
+    fi;
+  done;
+  rm -f $tempo;
+  if [ $found -ne "1" ] ; then
+    bail "No ports available";
+  fi;
+}
+
+#
+# Last resort
+#
+bail() {
+  echo "$1";
+  # in case mysql was locked
+  mysql -u "$mysql_user" -p"$mysql_pass" -e 'unlock tables;' -S"$source_socket"
+  # unmount the snapshot if mounted
+  unmount_volume;
+  remove_snapshot_volume;
+  remove_mounts_dir;
+  exit 1;
+}
+
+#
+# Remove snapshot volume
+#
+remove_snapshot_volume() {
+  echo -n "Removing LVM snapshot at /dev/$volume_group/$full_snapshot_name "
+  $lvdisplay "/dev/$volume_group/$full_snapshot_name" > /dev/null 2>&1
+  if [ $? -eq 0 ] ; then
+    ( $lvremove -f "/dev/$volume_group/$full_snapshot_name" > /dev/null ) &
+    printProgress $!
+  else
+    echo "Snapshot does not exist at /dev/$volume_group/$full_snapshot_name"
+  fi
+}
+
+#
+# Checks that there are no obstacles to creating snapshot
+#
+check_can_create() {
+    local status=0
+
+    # Check for lv snapshot
+    if $( $lvdisplay | grep -q "/dev/$volume_group/$full_snapshot_name$" )
+    then
+        echo "Logical volume found at /dev/$volume_group/$full_snapshot_name"
+        status=1
+    fi
+    # Check for mount directory, and status, if mount point exists and not mounted and listed within lvdisplay attempt mount
+    if [ -d "$snap_path" ] && $( grep -q "$snap_path " /proc/mounts )
+    then
+        echo "Filesystem already mounted at $snap_path"
+        status=2
+    elif [ "$status" -eq 1 ]
+    then
+        echo "Re-mounting device";
+        mkdir -p "$snap_path" > /dev/null 2>&1
+        mount -t reiserfs -v "/dev/$volume_group/$full_snapshot_name" "$snap_path" > /dev/null
+        status=2
+    fi
+    # Check for mysql
+    pgrep -f "$snap_path/" > /dev/null 2>&1
+    if [ "$?" -eq 0 ]
+    then
+        echo "MySQL instance already running from proposed directory path: $snap_path"
+        status=3
+    elif [ "$status" -eq 2 ]
+    then
+        port=$(first_ready_port);
+        echo -n "Respawning mysqld on port $port ";
+        ( sudo -u mysql mysqld --defaults-file="$config_file" --datadir=$datadir/ --socket=$snap_path/socket --port=$port > $snap_path/mysqld_output 2>&1 ) &
+        ( while :; do mysql -AS "$snap_path"/socket -e "SELECT 1" > /dev/null 2>&1; if [ $? -ne 0 ]; then sleep 1; else break; fi; done ) &
+        printProgress $!
+        status=4;
+    fi
+    # How did it go?
+    if [ "$status" -eq 4 ]
+    then
+        echo "Snapshot recovered successfully"
+        exit 1
+    elif [ "$status" -gt 0 ]
+    then
+        echo "(Failed [$status])"
+        exit 1
+    else
+        echo "(OK)"
+    fi
+}
+

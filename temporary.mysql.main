@@ -1,0 +1,133 @@
+#!/bin/bash
+# temporary.mysql.main
+#    Temporary MySQL Snapshots from MySQL
+#    Copyright (C) 2010 Andrew Johnstone, Maciej Wiercinski, Mark McIntyre
+#    Contacts: http://www.ajohnstone.com
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; version 2 of the License
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+_path=/root/bin/
+. $_path/mysql.lvm/lib/variables
+. $_path/mysql.lvm/lib/operations
+. $_path/mysql.lvm/lib/mounts
+. $_path/mysql.lvm/lib/mysql
+. $_path/mysql.lvm/lib/utility
+
+# Load configuration for volume users
+if [ -f "$_path/mysql.lvm/users/$current_user" ]; then 
+  . $_path/mysql.lvm/users/$current_user;
+else
+  echo "Using default user";
+  . $_path/mysql.lvm/users/default;
+fi
+
+#
+# Process arguments
+#
+if ( [ $# -eq 4 ] && [ $1 == "create" ] ) || ( [ $# -eq 3 ] && [ $1 == "create" ] )  || \
+     ( ( [ $# -eq 2 ] || [ $# -eq 3 ] ) && [ $1 == "remove" ] ) || \
+     ( ( [ $# -eq 1 ] || [ $# -eq 2 ] ) && [ $1 == "list" ] ) || \
+     ( [ $# -eq 2 ] && ( [ $1 == "create" ] || [ $1 == "remove" ] || [ $1 == "restart" ] ) )  || \
+     ( [ $# -eq 1 ] && ( [ $1 == "list" ] || [ $1 == "list-snaps" ] || [ $1 == "list-all" ] || [ $1 == "list-all-snapshots" ] ) \
+  ) ; then
+
+  command="$1;"
+  if ( [ $# -eq 2 ] ) || ( [ $# -eq 3 ] )  || ( [ $# -eq 4 ] ) ; then
+     snapshot_name="$2";
+
+     if [ $# -eq 3 ]
+     then
+       snapshot_group=$3;
+     fi;
+
+     if [ $# -eq 4 ]
+     then
+       if ([ -f "$3" ]) || ([ -f "${config_dir}${3}" ])
+       then 
+           if [ -f "$3" ]
+           then
+               dump_file="$3"
+           else
+               dump_file="${config_dir}${3}"
+           fi
+       else
+echo "$*";
+         echo "Dump file not found at $3"
+         exit 1
+       fi
+       dump_db="$4"
+     fi
+       
+  fi;
+else
+  echo "Usage `basename $0` list|list-snaps";
+  echo "Usage `basename $0` list-all|list-all-snapshots";
+  echo "Usage `basename $0` create|remove|restart <snapshot name>";
+  echo "Usage `basename $0` create|remove|restart <snapshot name> <lvm instance>";
+  echo "Usage `basename $0` create <snapshot name> <dump file> <db name>";
+  exit;
+fi;
+
+# Load configuration for volume groups
+if [ -f "$_path/mysql.lvm/groups/$snapshot_group" ]; then 
+  . $_path/mysql.lvm/groups/$snapshot_group;
+else
+  echo "Using default group";
+  . $_path/mysql.lvm/groups/default;
+fi
+
+full_snapshot_name="${snapshot_prefix}.${current_user}.${snapshot_group}.${snapshot_name}";
+snap_path="${mounts_dir}/${current_user}.${volume_group}.${snapshot_group}.${snapshot_name}";
+if [ -z "$datadir" ]; then
+  datadir="${snap_path}";
+else
+  datadir="${snap_path}/${datadir}";
+fi;
+original_volume="/dev/${volume_group}/${volume_name}";
+
+#
+# Action
+#
+case $1 in
+  "list")
+      list;
+  ;;
+  "list-snaps")
+      list_snapshots;
+  ;;
+  "list-all")
+      list_all;
+  ;;
+  "list-all-snapshots")
+      list_all_snapshots;
+  ;;
+  "remove")
+      remove_snapshot;
+  ;;
+  "create")
+      if ( [ $# -eq 2 ] || [ $# -eq 3 ] )
+      then 
+          create_snapshot;
+      fi
+      if [ $# -eq 4 ]
+      then
+          create_from_dump;
+      fi
+  ;;
+  "restart")
+      remove_snapshot;
+      create_snapshot;
+  ;;
+esac;
+

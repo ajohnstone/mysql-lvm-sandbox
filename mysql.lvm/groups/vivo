@@ -1,0 +1,11 @@
+volume_group="database";
+volume_name="example"
+cow_table_size="20G";
+mysql_user="temporary.mysql";
+mysql_pass="password";
+
+source_socket="/mnt/mysql/example/socket";
+
+config_file="${config_dir}/temporary.vivo.mysql.cnf"
+datadir="data";
+

@@ -1,0 +1,203 @@
+#!/bin/bash
+# temporary.mysql.main
+#    Temporary MySQL Snapshots from MySQL
+#    Copyright (C) 2010 Andrew Johnstone, Maciej Wiercinski, Mark McIntyre
+#    Contacts: http://www.ajohnstone.com
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; version 2 of the License
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+#
+# Removes snapshot
+#
+remove_snapshot() {
+  echo "=== Removing snapshot '$snapshot_name' for $current_user: ===";
+  find -L "/dev/$volume_group/$full_snapshot_name" -type b > /dev/null 2>&1
+  if [ $? -ne 0 ] ; then
+    echo "Snapshot not found at /dev/$volume_group/$full_snapshot_name";
+  fi
+
+  tear_down_mysqld
+  if [ $? -ne 0 ]; then exit 1; fi
+  unmount_volume;
+  if [ $? -ne 0 ]; then exit 1; fi
+  remove_snapshot_volume;
+  if [ $? -ne 0 ]; then exit 1; fi
+  remove_mounts_dir;
+  if [ $? -ne 0 ]; then exit 1; fi
+
+  echo "=== Removed snapshot '$snapshot_name' for $current_user: ===";
+}
+
+#
+# Lists all mysql instances for current_user
+#
+list() {
+    echo "=== Instances for user $current_user: ==="
+    echo ""
+    processes=$(pgrep -f -l "mysqld .*$current_user" | awk '{print $1}');
+    for i in $processes
+    do
+        process=$(ps aux | grep "^mysql \+$i")
+        port=$(echo "$process" | grep -o "port=[^ ]\+")
+        datadir=$(echo "$process" | grep -o "datadir=[^ ]\+")
+        name=$(echo "$datadir" | sed 's/^.*\.\(.\+\)$/\1/g' | sed 's/\(.*\)\//\1/g' | awk -F '/' '{print $1}')
+        name=$(echo "$datadir" | sed 's/^.*\.\(.\+\)\.\(.\+\)$/\1.\2/g' | sed 's/\(.*\)\//\1/g' | awk -F '/' '{print $1}')
+        echo "--- Instance '$name'"
+        echo "  * $datadir"
+        echo "  * $port"
+        echo ""
+    done
+}
+
+#
+# Gets all users with active mysql instances and runs list for each
+#
+list_all() {
+    processes=$(pgrep -f -l "mysqld.*$mounts_dir/" | awk '{print $1}');
+    users=( )
+    for i in $processes
+    do
+        process=$(ps aux | grep "^mysql \+$i")
+        datadir=$(echo "$process" | grep -o "datadir=[^ ]\+")
+        user=$(echo "$datadir" | sed 's/^.*\/\(.\+\)\.[^.]\+$/\1/g')
+        users=( "${users[@]}" "$user" )
+    done
+    unique_users=$(for x in ${users[@]}; do echo "$x"; done | sort -u)
+    for y in $unique_users
+    do
+        if [ "$y" != "mysql.production" ]
+        then
+            current_user="$y"
+            list
+        fi
+    done
+}
+
+#
+# Lists all mysql instances running from snapshots for current_user
+#
+list_snapshots() {
+  echo "=== Instances for user $current_user: ===";
+  echo ""
+  snaps=$(ls "/dev/$volume_group/" | grep "^${snapshot_prefix}\.${current_user}\.");
+
+  for i in $snaps ; do
+    cow_usage=$($lvdisplay "/dev/$volume_group/$i" | grep 'Allocated to snapshot' | awk '{print $4}');
+    name=$(echo $i | sed -e "s/^$snapshot_prefix\.$current_user\.//g");
+    snap_path="$mounts_dir/$current_user.$name";
+    echo "--- Active snapshot - $name";
+    echo "  * Mapper path: /dev/$volume_group/$i";
+    echo "  * Mount directory: $snap_path";
+    echo "  * COW usage: $cow_usage";
+    process=$(pgrep -f -l "mysqld.*datadir=$snap_path/");
+    if [ $? -eq 0 ] ; then
+      status="Running";
+      pid=$(echo $process | awk '{print $1}');
+      port=$(echo $process | sed -e's/^.*--port=\([0-9]*\).*$/\1/g');
+    else
+      status="---";
+    fi;
+    echo "  * MySQLd status: $status";
+    echo "   |-- datadir: $snap_path/"
+    echo "   |-- socket: $snap_path/socket"
+    echo "   |-- PID: $pid"
+    echo "   |-- port: $port";
+    echo ""
+  done;
+}
+
+
+#
+# Creates mysql instance running from snapshot
+#
+create_snapshot() {
+  echo "=== Creating snapshot '$snapshot_name' for $current_user: ===";
+
+  echo "Performing pre-creation checks..."
+  check_can_create
+
+  echo -n "Flushing master tables with read lock "
+  ( mysql -u "$mysql_user" -p"$mysql_pass" -e 'flush tables with read lock' -S "$source_socket" ) &
+  local mysql_pid=$!
+  ( printProgress $mysql_pid ) &
+  local wait_pid=$!
+  wait "$mysql_pid"
+  if [ $? -ne 0 ]
+  then
+    kill "$wait_pid"
+    echo "Flushing master tables failed"
+    exit 1
+  fi
+  wait "$wait_pid"
+
+  ( $lvdisplay $original_volume >/dev/null );
+  if [ $? -ne 0 ]; then
+    # Invalid lvm instance $original_volume
+    exit 1;
+  fi;
+
+  echo -n "Creating LVM snapshot of master "
+  ( $lvcreate --snapshot -n $full_snapshot_name -L $cow_table_size $original_volume > /dev/null ) & 
+  printProgress $!
+
+  # No need to wait for this
+  ( mysql -u "$mysql_user" -p"$mysql_pass" -e 'unlock tables;' -S"$source_socket" ) &
+
+  echo -n "Mounting snapshot '/dev/$volume_group/$full_snapshot_name' at $snap_path "
+  ( mkdir -p $snap_path > /dev/null; mount -t reiserfs -v "/dev/$volume_group/$full_snapshot_name" "$snap_path" > /dev/null ) &
+  printProgress $!
+
+  ( chown mysql.mysql $snap_path > /dev/null )
+
+  port=$(first_ready_port);
+
+  # starting mysqld
+  echo -n "Starting MySQL on port $port ";
+  ( sudo -u mysql mysqld --defaults-file="$config_file" --datadir=$datadir/ --socket=$snap_path/socket --port=$port > $snap_path/mysqld_output 2>&1 ) &
+  ( while :; do mysql -AS "$snap_path"/socket -e "SELECT 1" > /dev/null 2>&1; if [ $? -ne 0 ]; then sleep 1; else break; fi; done ) &
+  printProgress $!
+
+  echo "( sudo -u mysql mysqld --defaults-file=$config_file --datadir=$datadir/ --socket=$snap_path/socket --port=$port > $snap_path/mysqld_output 2>&1 ) &" | tee -a /var/log/temporary.mysql.log > /dev/null;
+  echo "=== Created snapshot '$snapshot_name' for $current_user on port $port ===" | tee -a /var/log/temporary.mysql.log;
+}
+
+#
+# Creates mysql instance from sql dump file
+#
+create_from_dump() {
+  echo "=== Creating mysql instance from dump for $current_user: ===";
+
+  echo "Creating directory stucture (Done)";
+  rm -rf "$snap_path" > /dev/null
+  mkdir -p "$snap_path" > /dev/null
+  chown mysql.mysql $snap_path > /dev/null
+
+  # starting mysqld
+  port=$(first_ready_port);
+  echo -n "Starting MySQL on port $port ";
+  ( sudo -u mysql mysqld --defaults-file="$config_file" --datadir=$datadir/ --socket=$snap_path/socket --port=$port > $snap_path/mysqld_output 2>&1 ) &
+  ( while :; do mysql -AS "$snap_path"/socket -e "SELECT 1" > /dev/null 2>&1; if [ $? -ne 0 ]; then sleep 1; else break; fi; done ) &
+  printProgress $!
+  # Load dump file
+  echo -n "Loading dump file at $dump_file into $dump_db - WARNING: Waiting forever ";
+  if [ ! -f "$dump_file" ]
+  then 
+      echo "Dump file not found at $dump_file"
+  else
+      mysql -AS "$snap_path"/socket -e "CREATE DATABASE $dump_db";
+      ( cat "$dump_file" | mysql -AS "$snap_path"/socket "$dump_db" > /dev/null ) &
+      printProgress $! 0
+  fi
+} 
+

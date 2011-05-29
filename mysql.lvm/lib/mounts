@@ -1,0 +1,45 @@
+#!/bin/bash
+# temporary.mysql.main
+#    Temporary MySQL Snapshots from MySQL
+#    Copyright (C) 2010 Andrew Johnstone, Maciej Wiercinski, Mark McIntyre
+#    Contacts: http://www.ajohnstone.com
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; version 2 of the License
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+#
+# Removes mount directory
+#
+remove_mounts_dir() {
+  if [ -x $snap_path ] ; then
+    echo -n "Removing mount directory at $snap_path "
+    ( rm -rf $snap_path > /dev/null ) &
+    printProgress $!
+  else
+    echo "No execute permissions on directory at $snap_path"
+  fi
+}
+
+#
+# Unmounts volume
+#
+unmount_volume() {
+  if grep " $snap_path reiserfs"  -q /proc/mounts ; then
+     echo -n "Unmounting volume at $snap_path ";
+     ( umount -l -v $snap_path ) & > /dev/null 2>&1
+     printProgress $!
+  else
+    echo "Volume not found in /proc/mounts at $snap_path"
+  fi;
+}
+
