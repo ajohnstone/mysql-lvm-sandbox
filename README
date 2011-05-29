@@ -1,0 +1,82 @@
+= Temporary Mysql Snapshots
+
+== User Commands:
+
+Usage temporary.mysql.main list|list-snaps
+Usage temporary.mysql.main list-all|list-all-snapshots
+Usage temporary.mysql.main create|remove|restart <snapshot name>
+Usage temporary.mysql.main create|remove|restart <snapshot name> <lvm instance>
+Usage temporary.mysql.main create <snapshot name> <dump file> <db name>
+
+== Example usage
+
+  bb3:~/bin# temporary.mysql list-snaps
+  Using default group
+  === Instances for user andrew: ===
+
+  bb3:~/bin# time temporary.mysql create test
+  bb3:~/bin# time temporary.mysql create test example
+  === Creating snapshot 'test' for andrew: ===
+  Performing pre-creation checks...
+  (OK)
+  Flushing master tables with read lock (Done)
+  Creating LVM snapshot of master (Done)
+  Mounting snapshot '/dev/database/temporary.andrew.example.test' at /mnt/mysql/andrew.database.example.test (Done)
+  Starting MySQL on port 3314 (Done)
+  === Created snapshot 'test' for andrew on port 3314 ===
+
+  real	0m8.355s
+  user	0m0.144s
+  sys	0m0.160s
+
+  bb3:~/bin# temporary.mysql list
+  Using default group
+  === Instances for user andrew: ===
+
+  --- Instance 'example.test'
+    * datadir=/mnt/mysql/andrew.database.example.test/data/
+    * port=3314
+
+  bb3:~/bin# temporary.mysql list-snaps
+  Using default group
+  === Instances for user andrew: ===
+
+  --- Active snapshot - example.test
+    * Mapper path: /dev/database/temporary.andrew.example.test
+    * Mount directory: /mnt/mysql/andrew.example.test
+    * COW usage: 0.00%
+    * MySQLd status: ---
+     |-- datadir: /mnt/mysql/andrew.example.test/
+     |-- socket: /mnt/mysql/andrew.example.test/socket
+     |-- PID: 4534
+     |-- port: 3314
+
+
+
+=== Create mysql instance from snapshot of live production data (subject to replication lag)
+
+temporary.mysql create <instance-name>
+temporary.mysql create <instance-name> <lvm-group>
+
+=== Create mysql instance from single mysqldump file
+- ''dump-files should be placed in /usr/local/share/temporary.mysql/ although absolute and relative paths are valid''
+- ''database is required as mysqldump does not include a 'CREATE DATABASE' statement when dumping tables''
+temporary.mysql create <instance-name> <dump-file-name> <database>
+
+== List mysql instances for current user
+temporary.mysql list
+
+=== List mysql snapshot instances for current user
+temporary.mysql list-snaps
+
+==== Remove mysql instance
+temporary.mysql remove <instance-name>
+
+=== Admin Commands
+
+==== List all mysql instances
+temporary.mysql list-all
+
+==== List all mysql snapshot instances
+temporary.mysql list-all-snapshots
+
